@@ -1,0 +1,70 @@
+// Define the point of interest
+var point = ee.Geometry.Point(75.4515749216, 30.6344041299);
+
+// Define the region of interest as polygon
+var region = ee.Geometry.Polygon(
+  [[[75.4515749216, 30.6344041299],
+    [75.4524278640, 30.6337209980],
+    [75.4523688554, 30.6343995141],
+    [75.4515749216, 30.6344041299]]],
+  null, false
+);
+
+// Function to remove cloud and snow pixels
+// Shadow and Cirrus removal using Scene Classificatio (SCL) band
+function maskCloudAndShadows(image) {
+  var cloudProb = image.select('MSK_CLDPRB');
+  var snowProb = image.select('MSK_SNWPRB');
+  var cloud = cloudProb.lt(5); // 5 indicates 5% of cloud probability
+  var snow = snowProb.lt(5);
+  var scl = image.select('SCL'); 
+  var shadow = scl.eq(3); // 3 = cloud shadow
+  var cirrus = scl.eq(10); // 10 = cirrus
+  // Masking of cloud, snow, cirrus and shadow
+  var mask = (cloud.and(snow)).and(cirrus.neq(1)).and(shadow.neq(1));
+  return image.updateMask(mask);
+}
+// Adding a MSAVI2 band into the image
+function addMSAVI2(image) {
+  // calculation of msavi2 index
+  var msavi2 = image.expression(
+    '(2*NIR+1-sqrt((2*NIR+1)**2-8*(NIR-RED)))/2', {
+      'NIR': image.select('B5'),
+      'RED': image.select('B4'),
+}).rename('msavi2');
+  return image.addBands([msavi2])
+}
+// Define the date range for time series
+var startDate = '2020-01-01'
+var endDate = '2021-01-31'
+// Use Sentinel-2 L2A data known for better cloud masking
+var collection = ee.ImageCollection('COPERNICUS/S2_SR')
+    .filterDate(startDate, endDate)
+    .map(maskCloudAndShadows)
+    .map(addMSAVI2)
+    .filter(ee.Filter.bounds(point))
+// Compute an view the median composite imagery
+var vizParams = {bands: ['B4', 'B3', 'B2'], min: 0, max: 2000}
+Map.addLayer(collection.median(), vizParams, 'collection')
+
+// Create time series chart for region of interest only
+var chart = ui.Chart.image.series({
+    imageCollection: collection.select('msavi2'),
+    region: region
+    }).setOptions({
+      interpolateNulls: true,
+      lineWidth: 1,
+      pointSize: 3,
+      title: 'MSAVI2 time series at Place 1',
+      vAxis: {title: 'MSAVI2'},
+      hAxis: {title: 'Date', format: 'YYYY-MMM', gridlines: {count: 12}}
+    })
+print(chart)
+
+// Export the result within region of interest
+Export.image.toDrive({
+  image: msavi2,
+  description: 'msavi2_place2',
+  scale: 30,
+  region:region
+});
